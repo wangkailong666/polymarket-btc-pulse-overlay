@@ -427,29 +427,34 @@
     return rect.width > 0 && rect.height > 0;
   }
 
-  function findVisibleExactText(text) {
+  function findVisibleExactText(text, options = {}) {
+    const { caseSensitive = false } = options;
     const target = normalizeText(text);
+    const normalizedTarget = caseSensitive ? target : target.toLowerCase();
     const elements = document.querySelectorAll("span, div, p, button");
     for (const element of elements) {
       if (!isElementVisible(element)) continue;
-      if (normalizeText(element.textContent) === target) return element;
+      const elementText = normalizeText(element.textContent);
+      const normalizedElementText = caseSensitive ? elementText : elementText.toLowerCase();
+      if (normalizedElementText === normalizedTarget) return element;
     }
     return null;
   }
 
   function findPriceContext() {
-    let fallback = null;
-    const label = findVisibleExactText("Price to beat");
+    const label =
+      findVisibleExactText("Price to beat") || findVisibleExactText("Price To Beat");
     if (!label) return null;
 
     const col = label.closest("div.flex.flex-col") || label.parentElement?.parentElement;
-    const row = col?.parentElement || null;
-    if (!row || !row.classList.contains("flex")) return null;
+    const row = col?.closest("div.flex.w-max") || col?.parentElement || null;
+    if (!row || !row.classList.contains("flex") || !row.classList.contains("w-max")) {
+      return null;
+    }
 
     const context = { row, col };
-    if (!fallback) fallback = context;
     if (isElementVisible(row) && isElementVisible(col)) return context;
-    return fallback;
+    return context;
   }
 
   function resetInjectedRefs() {

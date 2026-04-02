@@ -25,7 +25,7 @@ If your first question on a compatible market page is "what is spot doing right 
 
 ## Compatible pages
 
-The current version is tuned for Polymarket price markets where a visible `Price to beat` row exists on the page.
+The current version is tuned for Polymarket price markets where the price header row is visible on the page.
 
 Currently verified assets:
 
