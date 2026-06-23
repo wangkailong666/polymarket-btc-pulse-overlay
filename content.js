@@ -61,6 +61,9 @@
   let reconnectTimer = null;
   let reconnectDelay = RECONNECT_BASE_MS;
   let activeAsset = DEFAULT_ASSET;
+  let activeCycle = null;
+  let cycleStartPrice = null;
+  let nextCycleBoundaryTs = 0;
   let flashTimeout = null;
   let lastPrice = null;
   let prevPrice = null;
@@ -94,6 +97,8 @@
   let injectedCol = null;
   let injectedDivider = null;
   let elPrice = null;
+  let elCycleStartPrice = null;
+  let elPriceDiff = null;
   let elPairLabel = null;
   let elLatency = null;
   let elDot = null;
@@ -128,6 +133,23 @@
       font-variant-numeric: tabular-nums;
       transition: color 0.15s;
     }
+    .bpo-cycle-start-price {
+      display: block;
+      margin-top: 8px;
+      margin-right: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--bpo-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .bpo-price-diff {
+      margin-left: 8px;
+      font-size: 10px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .bpo-diff-up { color: var(--bpo-buy); }
+    .bpo-diff-down { color: #ef4444; }
     .bpo-tick-up { color: var(--bpo-buy) !important; }
     .bpo-tick-down { color: #ef4444 !important; }
     .bpo-label-row {
@@ -390,6 +412,40 @@
     };
   }
 
+  function detectCycle() {
+    const slug = getPageSlug();
+    const heading = getPageHeadingText();
+
+    if (slug.includes("-5-min") || heading.includes("5 min") || slug.includes("-5m-")) return "5m";
+    if (slug.includes("-15-min") || heading.includes("15 min") || slug.includes("-15m-")) return "15m";
+    if (slug.includes("-1-hour") || heading.includes("1 hour") || slug.includes("-1h-") || slug.includes("-1hr-")) return "1h";
+
+    return null;
+  }
+
+  function getCurrentCycleStart(cycle, now) {
+    if (!cycle) return null;
+    const date = new Date(now);
+    date.setSeconds(0, 0);
+    if (cycle === "5m") {
+      date.setMinutes(Math.floor(date.getMinutes() / 5) * 5);
+    } else if (cycle === "15m") {
+      date.setMinutes(Math.floor(date.getMinutes() / 15) * 15);
+    } else if (cycle === "1h") {
+      date.setMinutes(0);
+    }
+    return date.getTime();
+  }
+
+  function getNextCycleBoundary(cycle, now) {
+    const start = getCurrentCycleStart(cycle, now);
+    if (!start) return 0;
+    if (cycle === "5m") return start + 5 * 60 * 1000;
+    if (cycle === "15m") return start + 15 * 60 * 1000;
+    if (cycle === "1h") return start + 60 * 60 * 1000;
+    return 0;
+  }
+
   function detectTrackedAsset() {
     const supportedAsset =
       findSupportedAssetInText(getPageSlug()) || findSupportedAssetInText(getPageHeadingText());
@@ -413,6 +469,28 @@
       streamSymbol +
       "@bookTicker"
     );
+  }
+
+  async function fetchCycleStartPrice(asset, cycle, startTime) {
+    if (!asset || !asset.isSupported || !asset.streamSymbol || !startTime) return null;
+
+    const symbol = asset.streamSymbol.toUpperCase();
+    const interval = cycle === "1h" ? "1h" : cycle === "15m" ? "15m" : "5m";
+
+    try {
+      // Use Binance Klines API to get the open price of the candle at startTime
+      const response = await fetch(
+        `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&startTime=${startTime}&limit=1`
+      );
+      const data = await response.json();
+
+      if (data && data.length > 0) {
+        return parseFloat(data[0][1]); // Open price is at index 1
+      }
+    } catch (error) {
+      console.warn("[" + EXTENSION_NAME + "] Failed to fetch cycle start price", error);
+    }
+    return null;
   }
 
   function isElementVisible(element) {
@@ -461,6 +539,8 @@
     injectedCol = null;
     injectedDivider = null;
     elPrice = null;
+    elCycleStartPrice = null;
+    elPriceDiff = null;
     elPairLabel = null;
     elLatency = null;
     elDot = null;
@@ -504,6 +584,44 @@
     elLiquidityChip.className = "bpo-chip " + tone;
     elLiquidityMeta.textContent = latestLiquidity.meta || "Waiting for book";
     elLiquidityMeta.title = latestLiquidity.meta || "Waiting for book";
+  }
+
+  function renderCycleData() {
+    if (!elCycleStartPrice || !elPriceDiff || !activeCycle || cycleStartPrice === null) {
+      if (elCycleStartPrice) elCycleStartPrice.textContent = "";
+      if (elPriceDiff) elPriceDiff.textContent = "";
+      return;
+    }
+
+    // Format start price without $ sign, matching decimal logic of formatPrice
+    const startPriceNum = parseFloat(cycleStartPrice);
+    const formattedStart = startPriceNum >= 100000
+      ? Math.round(startPriceNum).toLocaleString("en-US")
+      : startPriceNum.toLocaleString("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        });
+    elCycleStartPrice.textContent = formattedStart;
+
+    if (lastPrice !== null) {
+      const currentPriceNum = parseFloat(lastPrice);
+      const diff = currentPriceNum - startPriceNum;
+      const absDiff = Math.abs(diff);
+      const sign = diff >= 0 ? "+" : "-";
+
+      // Match decimal places of the asset
+      const formattedDiff = currentPriceNum >= 100000
+        ? Math.round(absDiff).toLocaleString("en-US")
+        : absDiff.toLocaleString("en-US", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          });
+
+      elPriceDiff.textContent = sign + formattedDiff;
+      elPriceDiff.className = "bpo-price-diff " + (diff >= 0 ? "bpo-diff-up" : "bpo-diff-down");
+    } else {
+      elPriceDiff.textContent = "";
+    }
   }
 
   function updateLatency() {
@@ -593,6 +711,7 @@
 
     renderFlow();
     renderLiquidity();
+    renderCycleData();
   }
 
   function disconnectSocket() {
@@ -617,12 +736,24 @@
 
   function syncTrackedAsset(forceReconnect = false) {
     const nextAsset = detectTrackedAsset();
-    if (!forceReconnect && activeAsset.key === nextAsset.key) {
+    const nextCycle = detectCycle();
+
+    const assetChanged = activeAsset.key !== nextAsset.key;
+    const cycleChanged = activeCycle !== nextCycle;
+
+    if (!forceReconnect && !assetChanged && !cycleChanged) {
       renderPairLabel();
       return false;
     }
 
     activeAsset = nextAsset;
+    activeCycle = nextCycle;
+
+    if (assetChanged || cycleChanged) {
+      cycleStartPrice = null;
+      nextCycleBoundaryTs = 0;
+    }
+
     reconnectDelay = RECONNECT_BASE_MS;
     resetLiveStreamState();
     renderPairLabel();
@@ -660,6 +791,8 @@
       }
 
       elPrice = existingPrice;
+      elCycleStartPrice = row.querySelector("[data-bpo-cycle-start]");
+      elPriceDiff = row.querySelector("[data-bpo-price-diff]");
       elPairLabel = row.querySelector("[data-bpo-pair-label]");
       elLatency = row.querySelector("[data-bpo-latency]");
       elDot = row.querySelector("[data-bpo-dot]");
@@ -674,6 +807,7 @@
         updateLatency();
       }
 
+      renderCycleData();
       renderPairLabel();
       renderFlow();
       renderLiquidity();
@@ -704,11 +838,13 @@
           <div class="bpo-dot" data-bpo-dot></div>
           <span class="text-body-xs font-semibold" data-bpo-pair-label style="color: var(--bpo-accent);">Binance live</span>
           <span class="bpo-latency" data-bpo-latency>--</span>
+          <span class="bpo-price-diff" data-bpo-price-diff></span>
         </div>
       </div>
       <div class="bpo-root">
-        <div class="bpo-price-block">
-          <span class="bpo-price-value" data-bpo-price style="color: var(--bpo-accent);">--</span>
+        <div class="bpo-price-block" style="flex-direction: row; align-items: baseline; flex: 0 0 auto; min-width: 118px;">
+          <span class="bpo-cycle-start-price" data-bpo-cycle-start></span>
+          <span class="bpo-price-value" data-bpo-price style="color: var(--bpo-accent); flex: 1;">--</span>
         </div>
         <div class="bpo-status-block">
           <div class="bpo-status-row">
@@ -733,6 +869,8 @@
     ensureRightmostPlacement(row);
 
     elPrice = injectedCol.querySelector("[data-bpo-price]");
+    elCycleStartPrice = injectedCol.querySelector("[data-bpo-cycle-start]");
+    elPriceDiff = injectedCol.querySelector("[data-bpo-price-diff]");
     elPairLabel = injectedCol.querySelector("[data-bpo-pair-label]");
     elLatency = injectedCol.querySelector("[data-bpo-latency]");
     elDot = injectedCol.querySelector("[data-bpo-dot]");
@@ -747,6 +885,7 @@
       updateLatency();
     }
 
+    renderCycleData();
     renderPairLabel();
     renderFlow();
     renderLiquidity();
@@ -761,8 +900,18 @@
     return true;
   }
 
-  function pollForInjection() {
+  async function pollForInjection() {
     syncTrackedAsset();
+
+    const now = Date.now();
+    if (activeCycle && activeAsset.isSupported) {
+      const currentCycleStart = getCurrentCycleStart(activeCycle, now);
+      if (cycleStartPrice === null || now >= nextCycleBoundaryTs) {
+        nextCycleBoundaryTs = getNextCycleBoundary(activeCycle, now);
+        cycleStartPrice = await fetchCycleStartPrice(activeAsset, activeCycle, currentCycleStart);
+        if (elPrice) renderCycleData();
+      }
+    }
 
     const context = findPriceContext();
     const row = context?.row || null;
@@ -1048,6 +1197,7 @@
     }
 
     updateLatency();
+    renderCycleData();
     updatePanel(false);
 
     if (elDot) elDot.className = "bpo-dot";
