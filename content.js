@@ -38,6 +38,7 @@
       pairLabel: "Binance XRP/USDT",
       streamSymbol: "xrpusdt",
       isSupported: true,
+      precision: 4,
       patterns: [/\bripple\b/i, /(?:^|[^a-z])xrp(?:[^a-z]|$)/i],
     },
     {
@@ -45,6 +46,7 @@
       pairLabel: "Binance DOGE/USDT",
       streamSymbol: "dogeusdt",
       isSupported: true,
+      precision: 6,
       patterns: [/\bdogecoin\b/i, /(?:^|[^a-z])doge(?:[^a-z]|$)/i],
     },
     {
@@ -52,7 +54,16 @@
       pairLabel: "Binance BNB/USDT",
       streamSymbol: "bnbusdt",
       isSupported: true,
+      precision: 4,
       patterns: [/\bbinance coin\b/i, /(?:^|[^a-z])bnb(?:[^a-z]|$)/i],
+    },
+    {
+      key: "hype",
+      pairLabel: "Binance HYPE/USDT",
+      streamSymbol: "hypeusdt",
+      isSupported: true,
+      precision: 4,
+      patterns: [/\bhyperliquid\b/i, /(?:^|[^a-z])hype(?:[^a-z]|$)/i],
     },
   ];
   const DEFAULT_ASSET = ASSET_CONFIGS[0];
@@ -63,6 +74,7 @@
   let activeAsset = DEFAULT_ASSET;
   let activeCycle = null;
   let cycleStartPrice = null;
+  let isFetchingStartPrice = false;
   let nextCycleBoundaryTs = 0;
   let flashTimeout = null;
   let lastPrice = null;
@@ -317,11 +329,12 @@
   function formatPrice(value) {
     const n = parseFloat(value);
     if (isNaN(n)) return "--";
+    const precision = activeAsset?.precision || 2;
     return n >= 100000
       ? "$" + Math.round(n).toLocaleString("en-US")
       : "$" + n.toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
+          minimumFractionDigits: precision,
+          maximumFractionDigits: precision,
         });
   }
 
@@ -593,13 +606,15 @@
       return;
     }
 
+    const precision = activeAsset?.precision || 2;
+
     // Format start price without $ sign, matching decimal logic of formatPrice
     const startPriceNum = parseFloat(cycleStartPrice);
     const formattedStart = startPriceNum >= 100000
       ? Math.round(startPriceNum).toLocaleString("en-US")
       : startPriceNum.toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
+          minimumFractionDigits: precision,
+          maximumFractionDigits: precision,
         });
     elCycleStartPrice.textContent = formattedStart;
 
@@ -613,8 +628,8 @@
       const formattedDiff = currentPriceNum >= 100000
         ? Math.round(absDiff).toLocaleString("en-US")
         : absDiff.toLocaleString("en-US", {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
+            minimumFractionDigits: precision,
+            maximumFractionDigits: precision,
           });
 
       elPriceDiff.textContent = sign + formattedDiff;
@@ -904,12 +919,17 @@
     syncTrackedAsset();
 
     const now = Date.now();
-    if (activeCycle && activeAsset.isSupported) {
+    if (activeCycle && activeAsset.isSupported && !isFetchingStartPrice) {
       const currentCycleStart = getCurrentCycleStart(activeCycle, now);
       if (cycleStartPrice === null || now >= nextCycleBoundaryTs) {
-        nextCycleBoundaryTs = getNextCycleBoundary(activeCycle, now);
-        cycleStartPrice = await fetchCycleStartPrice(activeAsset, activeCycle, currentCycleStart);
-        if (elPrice) renderCycleData();
+        isFetchingStartPrice = true;
+        try {
+          nextCycleBoundaryTs = getNextCycleBoundary(activeCycle, now);
+          cycleStartPrice = await fetchCycleStartPrice(activeAsset, activeCycle, currentCycleStart);
+          if (elPrice) renderCycleData();
+        } finally {
+          isFetchingStartPrice = false;
+        }
       }
     }
 
@@ -1306,16 +1326,24 @@
       }
     };
 
-    socket.onerror = () => {
+    socket.onerror = (error) => {
       if (ws !== socket) return;
-      console.warn("[" + EXTENSION_NAME + "] WS error (" + activeAsset.pairLabel + ")");
+      console.warn("[" + EXTENSION_NAME + "] WS error (" + activeAsset.pairLabel + ")", error);
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (ws !== socket) return;
       ws = null;
       console.log(
-        "[" + EXTENSION_NAME + "] WS closed, reconnecting in " + reconnectDelay + "ms"
+        "[" +
+          EXTENSION_NAME +
+          "] WS closed (code: " +
+          event.code +
+          ", reason: " +
+          event.reason +
+          "), reconnecting in " +
+          reconnectDelay +
+          "ms"
       );
       if (elDot) elDot.className = "bpo-dot disconnected";
       clearTimeout(reconnectTimer);
