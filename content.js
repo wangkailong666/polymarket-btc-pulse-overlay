@@ -632,7 +632,14 @@
             maximumFractionDigits: precision,
           });
 
-      elPriceDiff.textContent = sign + formattedDiff;
+      // Calculate specific log-based percentage: [ln(current) - ln(start)] / ln(start) * 100
+      const logPct = ((Math.log(currentPriceNum) - Math.log(startPriceNum)) / Math.log(startPriceNum)) * 100;
+      const formattedPct = Math.abs(logPct).toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+
+      elPriceDiff.textContent = sign + formattedDiff + " (" + sign + formattedPct + "%)";
       elPriceDiff.className = "bpo-price-diff " + (diff >= 0 ? "bpo-diff-up" : "bpo-diff-down");
     } else {
       elPriceDiff.textContent = "";
