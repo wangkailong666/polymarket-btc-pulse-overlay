@@ -632,14 +632,14 @@
             maximumFractionDigits: precision,
           });
 
-      // Calculate specific log-based percentage: [ln(current) - ln(start)] / ln(start) * 100
-      const logPct = ((Math.log(currentPriceNum) - Math.log(startPriceNum)) / Math.log(startPriceNum)) * 100;
-      const formattedPct = Math.abs(logPct).toLocaleString("en-US", {
+      // Calculate specific log-based value: [ln(current) - ln(start)] / ln(start) * 100000
+      const logVal = ((Math.log(currentPriceNum) - Math.log(startPriceNum)) / Math.log(startPriceNum)) * 100000;
+      const formattedVal = Math.abs(logVal).toLocaleString("en-US", {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       });
 
-      elPriceDiff.textContent = sign + formattedDiff + " (" + sign + formattedPct + "%)";
+      elPriceDiff.textContent = sign + formattedDiff + " (十万分之" + sign + formattedVal + ")";
       elPriceDiff.className = "bpo-price-diff " + (diff >= 0 ? "bpo-diff-up" : "bpo-diff-down");
     } else {
       elPriceDiff.textContent = "";
